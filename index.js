@@ -2,6 +2,8 @@ const fetch = require('node-fetch');
 require('dotenv').config();
 const util = require('util');
 const https = require('https');
+const http = require('http');
+const { URL } = require('url');
 const fs = require('fs');
 
 async function getNodes() {
@@ -118,7 +120,16 @@ async function downloadBackup(nodeid, serverid, backup) {
         }
 
         const file = fs.createWriteStream(filePath + ".download");
-        https.get(downloadURL, function(response) {
+
+        let protocol;
+        if (urlObj.protocol === 'https:') {
+            protocol = https;
+        } else if (urlObj.protocol === 'http:') {
+            protocol = http;
+        } else {
+            throw new Error(`Unsupported protocol: ${urlObj.protocol}`);
+        }
+        protocol.get(downloadURL, function(response) {
             response.pipe(file);
     
             // after download completed close filestream
@@ -135,7 +146,7 @@ async function downloadBackup(nodeid, serverid, backup) {
     });
 }
 
-async function downloadNewBackups(syncInfo) {
+async function downloadNewBackups(syncInfo, oldSyncInfo) {
 
     console.log("Start downloading Backups");
     let total = 0;
@@ -144,44 +155,111 @@ async function downloadNewBackups(syncInfo) {
     const promises = [];
     for (const nodeid in syncInfo.nodes) {
         promises.push(new Promise(async (resolve, reject) => {
-            if(!syncInfo.nodes[nodeid].online) return;
+            if(!syncInfo.nodes[nodeid].online) {
+                resolve("Node is offline");
+                return;
+            }
 
             for(const serverid in syncInfo.nodes[nodeid].servers) {
                 const backups = syncInfo.nodes[nodeid].servers[serverid].backups
                 for(const backupindex in backups) {
-                    const backup = backups[backupindex]
+                    const backup = backups[backupindex];
 
-                    if(syncInfo.nodes[nodeid].lastSync && new Date(syncInfo.nodes[nodeid].lastSync) > new Date()) {
-                        console.log("Backup was already synced");
-                        continue;
+                    // Ther is a last sync
+                    if(!oldSyncInfo || oldSyncInfo == {}) {
+                        console.log("Last sync detected.");
+                        // Node was present in last sync
+                        if(oldSyncInfo.nodes && oldSyncInfo.nodes[nodeid] && oldSyncInfo.nodes[nodeid].online) {
+                            console.log("Node with this backup was present & online in last sync.");
+                            // Last sync was after backup creation
+                            if(new Date(oldSyncInfo.lastSync) > new Date(backup.date)) {
+                                console.log("Backup should already be synced.");
+                                continue;
+                            }
+                        }
                     }
                     
-                    if(!backup.success) continue;
+                    if(!backup.success) {
+                        continue;
+                    } 
 
                     console.log("Syncing backup");
                     
                     await downloadBackup(nodeid, serverid, backup).catch(err => reject(err));
 
                     total++;
-                    resolve();
                 }
+                resolve();
             }
         }));
         await Promise.all(promises);
         
         syncInfo.nodes[nodeid].lastSync = new Date().toJSON();
     }
-    console.log("Total Backups: " + total);
+    console.log("Downloaded Backups: " + total);
 }
 
-async function startDownload() {
+async function deleteOldBackups(syncInfo) {
+    // loop over file structure and fild old backups delete them if they are older than a week
+    console.log("Checking for stray backups");
+    
+    fs.readdir("syncs/downloads", (err, files) => {
+        files.forEach(file => {
+            const nodeid = file.replace("node-", "");
+            fs.readdir("syncs/downloads/node-" + nodeid, (err, files) => {
+                files.forEach(file => {
+                    const serverid = file.replace("server-", "");
+                    const serverPath = "syncs/downloads/node-" + nodeid + "/server-" + serverid + "/";
+                    console.log("Checking backups for server: " + serverid);
+                    fs.readdir(serverPath, (err, files) => {
+                        files.forEach(file => { 
+                            const backupuuid = file.replace(".tar.gz", "").replace(".download", "");
+                            
+                            // Node Exists & is online
+                            if(syncInfo.nodes[nodeid] && syncInfo.nodes[nodeid].online) {
+                                server = syncInfo.nodes[nodeid].servers[serverid];
+
+                                // server and backups exist
+                                if(server && (backupuuid in server.backups || server.suspended)) {
+                                    // keep
+                                    console.log("Keeping backup: " + backupuuid);
+                                }
+                                else {
+                                    console.log("Stray backup detected: " + backupuuid);
+
+                                    // delete if older than a week
+                                    var stats = fs.statSync(serverPath + file);
+                                    var lastModified = new Date(stats.mtime);
+                                    if((new Date() - lastModified) < (60 * 60 * 1000) * 24 * 7) {
+                                        console.log("Stray backup is not older than a week. Keeping it in case of user error.");
+                                    }
+                                    else {
+                                        console.log("Deleting Stray backup.");
+                                        fs.unlinkSync(serverPath + file);
+                                    }
+                                }
+                            }
+                            else {
+                                console.log("Node is offline, or was deleted. Please cleanup node-" + nodeid + " manually if the node was intentionally deleted.");
+                            }
+                        });
+                    });
+                });
+            });
+        });
+    });
+
+}
+
+async function getSyncInfo() {
     let oldSyncInfo = {};
 
     const logPath = "syncs/logs/";
     await fs.mkdirSync(logPath, { recursive: true });
-    const latestSyncPath = fs.readdirSync(logPath)[logPath.length - 1];
-    if(latestSyncPath)
-        oldSyncInfo = require(logPath + latestSyncPath.name);
+    const latestSyncDir = fs.readdirSync(logPath);
+    const latestSyncItem = latestSyncDir[latestSyncDir.length - 1];
+    if(latestSyncItem)
+        oldSyncInfo = JSON.parse(fs.readFileSync(logPath + latestSyncItem));
 
     const syncInfo = {lastSync: new Date().toJSON(), nodes: {}};
 
@@ -215,22 +293,43 @@ async function startDownload() {
         }));
     }
     await Promise.all(promises);
-    
+
+    return {syncInfo: syncInfo, oldSyncInfo: oldSyncInfo};
+}
+
+async function startDownload(syncInfo, oldSyncInfo) {
     // Get servers of online nodes
     await getServers(syncInfo);
 
     // Get backups for all servers
-    // Store backup count
-    // Store backup name, backup uuid, backup date
 
     await iterateBackups(syncInfo);
 
-    console.log(util.inspect(syncInfo, true, null, true));
+    // console.log(util.inspect(syncInfo, true, null, true));
+    // console.log(util.inspect(oldSyncInfo, true, null, true));
 
-    await downloadNewBackups(syncInfo);
+    // Download everything
+    await downloadNewBackups(syncInfo, oldSyncInfo);
     
     let data = JSON.stringify(syncInfo);
-    fs.writeFileSync('syncs/logs/syncinfo-' + new Date().toJSON() + '.json', data);
+    fs.writeFileSync('syncs/logs/syncinfo-' + formatDate(new Date()) + '.json', data);
 }
 
-startDownload();
+async function init() {
+    const { syncInfo, oldSyncInfo } = await getSyncInfo();
+    await startDownload(syncInfo, oldSyncInfo);
+    await deleteOldBackups(syncInfo);
+}
+
+function formatDate(date) {
+    var year = date.getFullYear();
+    var month = String(date.getMonth() + 1).padStart(2, '0');      // "+ 1" becouse the 1st month is 0
+    var day = String(date.getDate()).padStart(2, '0');
+    var hour = String(date.getHours()).padStart(2, '0');
+    var minutes = String(date.getMinutes()).padStart(2, '0');
+    var secconds = String(date.getSeconds()).padStart(2, '0');
+
+    return year + "-" + month + '-' + day + '_'+ hour+ '-'+ minutes+ '-'+ secconds;
+}
+
+init();

@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "run": "node index.js",
+    "docker-build": "docker build -f ./dockerfile . -t pterodactyl_backups",
+    "docker-build-arm": "docker build -f ./dockerfile . --platform linux/arm/v7 -t pterodactyl_backups"
   },
   "author": "",
   "license": "ISC",
