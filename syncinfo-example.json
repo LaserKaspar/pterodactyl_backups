@@ -1,0 +1,22 @@
+{
+    "lastSync": "Date",
+    "nodes": {
+        "11": {
+            "lastSync": "Date",
+            "servers": {
+                "identifyer-xxwef23": {
+                    "name": "Minecraft",
+                    "owner": "owner name",
+                    "egg": "egg",
+                    "backups": [
+                        {
+                            "createdAt": 100,
+                            "name": "Name",
+                            "uuid": "xxx"
+                        }
+                    ]
+                }
+            }
+        }
+    }
+}
