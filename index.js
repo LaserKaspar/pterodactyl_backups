@@ -7,7 +7,7 @@ const { URL } = require('url');
 const fs = require('fs');
 
 async function getNodes() {
-    const resp = await fetch('https://pterodactyl.roisplitt.at/api/application/nodes/', {
+    const resp = await fetch(process.env.PTERO_BASE_URL + '/api/application/nodes/', {
         headers: {"Authorization": 'Bearer ' + process.env.ADMINUSER_API_KEY}
     });
     const json = await resp.json();
@@ -22,7 +22,7 @@ async function getNodes() {
 }
 
 async function checkIfNodeIsUp(nodeid) {
-    const resp = await fetch('https://pterodactyl.roisplitt.at/api/application/nodes/' + nodeid, {
+    const resp = await fetch(process.env.PTERO_BASE_URL + '/api/application/nodes/' + nodeid, {
         headers: {"Authorization": 'Bearer ' + process.env.ADMINUSER_API_KEY}
     });
     const json = await resp.json();
@@ -39,7 +39,7 @@ async function checkIfNodeIsUp(nodeid) {
 }
 
 async function getServers(syncInfo) {
-    const resp = await fetch('https://pterodactyl.roisplitt.at/api/application/servers', {
+    const resp = await fetch(process.env.PTERO_BASE_URL + '/api/application/servers', {
         headers: {"Authorization": 'Bearer ' + process.env.APPLICATION_API_KEY}
     });
     const json = await resp.json();
@@ -78,7 +78,7 @@ async function getBackupForServer(server) {
         return;
     }
 
-    const resp = await fetch('https://pterodactyl.roisplitt.at/api/client/servers/' + server.identifier + '/backups', {
+    const resp = await fetch(process.env.PTERO_BASE_URL + '/api/client/servers/' + server.identifier + '/backups', {
         headers: {"Authorization": 'Bearer ' + process.env.ADMINUSER_API_KEY}
     });
     console.log("Get backups for: " + server.name);
@@ -95,7 +95,7 @@ async function getBackupForServer(server) {
 }
 
 async function downloadBackup(nodeid, serverid, backup) {
-    const resp = await fetch('https://pterodactyl.roisplitt.at/api/client/servers/' + serverid + '/backups/' + backup.uuid + '/download', {
+    const resp = await fetch(process.env.PTERO_BASE_URL + '/api/client/servers/' + serverid + '/backups/' + backup.uuid + '/download', {
         headers: {"Authorization": 'Bearer ' + process.env.ADMINUSER_API_KEY}
     });
 
@@ -121,15 +121,16 @@ async function downloadBackup(nodeid, serverid, backup) {
 
         const file = fs.createWriteStream(filePath + ".download");
 
+        const url = new URL(downloadURL);
         let protocol;
-        if (urlObj.protocol === 'https:') {
+        if (url.protocol === 'https:') {
             protocol = https;
-        } else if (urlObj.protocol === 'http:') {
+        } else if (url.protocol === 'http:') {
             protocol = http;
         } else {
             throw new Error(`Unsupported protocol: ${urlObj.protocol}`);
         }
-        protocol.get(downloadURL, function(response) {
+        protocol.get(url, function(response) {
             response.pipe(file);
     
             // after download completed close filestream
@@ -154,6 +155,7 @@ async function downloadNewBackups(syncInfo, oldSyncInfo) {
     // Download new backups in paralell for each node
     const promises = [];
     for (const nodeid in syncInfo.nodes) {
+        // Sync node
         promises.push(new Promise(async (resolve, reject) => {
             if(!syncInfo.nodes[nodeid].online) {
                 resolve("Node is offline");
@@ -189,8 +191,9 @@ async function downloadNewBackups(syncInfo, oldSyncInfo) {
 
                     total++;
                 }
-                resolve();
             }
+
+            resolve();
         }));
         await Promise.all(promises);
         
@@ -318,6 +321,7 @@ async function startDownload(syncInfo, oldSyncInfo) {
 async function init() {
     const { syncInfo, oldSyncInfo } = await getSyncInfo();
     await startDownload(syncInfo, oldSyncInfo);
+    console.log("Download done.");
     await deleteOldBackups(syncInfo);
 }
 
