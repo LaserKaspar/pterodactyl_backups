@@ -168,7 +168,7 @@ async function downloadNewBackups(syncInfo, oldSyncInfo) {
                     const backup = backups[backupindex];
 
                     // There is a last sync
-                    if(oldSyncInfo && oldSyncInfo != {}) {
+                    if(oldSyncInfo && Object.keys(oldSyncInfo).length !== 0) {
                         console.log("Last sync detected.");
                         // Node was present in last sync
                         if(oldSyncInfo.nodes && oldSyncInfo.nodes[nodeid] && oldSyncInfo.nodes[nodeid].online) {
