@@ -167,8 +167,8 @@ async function downloadNewBackups(syncInfo, oldSyncInfo) {
                 for(const backupindex in backups) {
                     const backup = backups[backupindex];
 
-                    // Ther is a last sync
-                    if(!oldSyncInfo || oldSyncInfo == {}) {
+                    // There is a last sync
+                    if(oldSyncInfo && oldSyncInfo != {}) {
                         console.log("Last sync detected.");
                         // Node was present in last sync
                         if(oldSyncInfo.nodes && oldSyncInfo.nodes[nodeid] && oldSyncInfo.nodes[nodeid].online) {
@@ -202,6 +202,15 @@ async function downloadNewBackups(syncInfo, oldSyncInfo) {
     console.log("Downloaded Backups: " + total);
 }
 
+function isBackupInBackupList(uuid, backupList) {
+    for (let index = 0; index < backupList.length; index++) {
+        const backup = backupList[index];
+        if(backup.uuid == uuid)
+            return true;
+    }
+    return false;
+}
+
 async function deleteOldBackups(syncInfo) {
     // loop over file structure and fild old backups delete them if they are older than a week
     console.log("Checking for stray backups");
@@ -217,19 +226,18 @@ async function deleteOldBackups(syncInfo) {
                     fs.readdir(serverPath, (err, files) => {
                         files.forEach(file => { 
                             const backupuuid = file.replace(".tar.gz", "").replace(".download", "");
-                            
+
                             // Node Exists & is online
                             if(syncInfo.nodes[nodeid] && syncInfo.nodes[nodeid].online) {
                                 server = syncInfo.nodes[nodeid].servers[serverid];
 
                                 // server and backups exist
-                                if(server && (backupuuid in server.backups || server.suspended)) {
+                                if(server && (isBackupInBackupList(backupuuid, server.backups) || server.suspended)) {
                                     // keep
                                     console.log("Keeping backup: " + backupuuid);
                                 }
                                 else {
                                     console.log("Stray backup detected: " + backupuuid);
-
                                     // delete if older than a week
                                     var stats = fs.statSync(serverPath + file);
                                     var lastModified = new Date(stats.mtime);
@@ -318,13 +326,6 @@ async function startDownload(syncInfo, oldSyncInfo) {
     fs.writeFileSync('syncs/logs/syncinfo-' + formatDate(new Date()) + '.json', data);
 }
 
-async function init() {
-    const { syncInfo, oldSyncInfo } = await getSyncInfo();
-    await startDownload(syncInfo, oldSyncInfo);
-    console.log("Download done.");
-    await deleteOldBackups(syncInfo);
-}
-
 function formatDate(date) {
     var year = date.getFullYear();
     var month = String(date.getMonth() + 1).padStart(2, '0');      // "+ 1" becouse the 1st month is 0
@@ -334,6 +335,18 @@ function formatDate(date) {
     var secconds = String(date.getSeconds()).padStart(2, '0');
 
     return year + "-" + month + '-' + day + '_'+ hour+ '-'+ minutes+ '-'+ secconds;
+}
+
+async function done() {
+    await fetch(process.env.DONE_GET_URL);
+}
+
+async function init() {
+    const { syncInfo, oldSyncInfo } = await getSyncInfo();
+    await startDownload(syncInfo, oldSyncInfo);
+    console.log("Download done.");
+    await deleteOldBackups(syncInfo);
+    await done();
 }
 
 init();
