@@ -10,7 +10,7 @@ async function getNodes() {
     const resp = await fetch(process.env.PTERO_BASE_URL + '/api/application/nodes/', {
         headers: {"Authorization": 'Bearer ' + process.env.ADMINUSER_API_KEY}
     });
-    const json = await resp.json();
+    const json = await resp.json(); // TODO: Check if API key was denied
 
     nodes = {}
 
@@ -21,6 +21,21 @@ async function getNodes() {
     return nodes;
 }
 
+async function fetchWithTimeout(resource, options = {}) {
+    const { timeout = 8000 } = options;
+    
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+  
+    const response = await fetch(resource, {
+      ...options,
+      signal: controller.signal  
+    });
+    clearTimeout(id);
+  
+    return response;
+}
+
 async function checkIfNodeIsUp(nodeid) {
     const resp = await fetch(process.env.PTERO_BASE_URL + '/api/application/nodes/' + nodeid, {
         headers: {"Authorization": 'Bearer ' + process.env.ADMINUSER_API_KEY}
@@ -29,7 +44,9 @@ async function checkIfNodeIsUp(nodeid) {
 
     const url = json.attributes.scheme + "://" + json.attributes.fqdn + ":" + json.attributes.daemon_listen;
     console.log("Check if Node " + nodeid + " (" + url + ") is online.");
-    const status = await fetch(url).then(resp => true).catch(err => false);
+    const status = await fetchWithTimeout(url, {
+        timeout: 3000
+    }).then(resp => true).catch(err => false);
     if(status)
         console.log("Node " + nodeid + " is up");
     else
@@ -42,7 +59,7 @@ async function getServers(syncInfo) {
     const resp = await fetch(process.env.PTERO_BASE_URL + '/api/application/servers', {
         headers: {"Authorization": 'Bearer ' + process.env.APPLICATION_API_KEY}
     });
-    const json = await resp.json();
+    const json = await resp.json(); // TODO: Check if API key was denied
 
     for(const server of json.data) {
         const attributes = server.attributes;
@@ -90,6 +107,7 @@ async function getBackupForServer(server) {
             name: backup.attributes.name, 
             success: backup.attributes.is_successful, 
             date: backup.attributes.created_at
+            // TODO: add sha1 hash
         }
     });
 }
@@ -200,11 +218,18 @@ async function downloadNewBackups(syncInfo, oldSyncInfo) {
         syncInfo.nodes[nodeid].lastSync = new Date().toJSON();
     }
     console.log("Downloaded Backups: " + total);
+    // TODO: Add to sync info - download size, backup amount
 }
 
 function isBackupInBackupList(uuid, backupList) {
+    if(!backupList) // This sever does not have backups
+        return false;
+
     for (let index = 0; index < backupList.length; index++) {
         const backup = backupList[index];
+        if(!backup.hasOwnProperty("uuid") || !backup.uuid) {
+            throw new Error("Backup list was passed in the wrong format.");
+        }
         if(backup.uuid == uuid)
             return true;
     }
@@ -229,7 +254,7 @@ async function deleteOldBackups(syncInfo) {
 
                             // Node Exists & is online
                             if(syncInfo.nodes[nodeid] && syncInfo.nodes[nodeid].online) {
-                                server = syncInfo.nodes[nodeid].servers[serverid];
+                                const server = syncInfo.nodes[nodeid].servers[serverid];
 
                                 // server and backups exist
                                 if(server && (isBackupInBackupList(backupuuid, server.backups) || server.suspended)) {
@@ -237,6 +262,8 @@ async function deleteOldBackups(syncInfo) {
                                     console.log("Keeping backup: " + backupuuid);
                                 }
                                 else {
+                                    // TODO: Instead of deleting backups that are older than a week let the user decide & keep more recent backups and less old ones (possible with min time between backups function? GFS Backups)
+
                                     console.log("Stray backup detected: " + backupuuid);
                                     // delete if older than a week
                                     var stats = fs.statSync(serverPath + file);
@@ -259,7 +286,7 @@ async function deleteOldBackups(syncInfo) {
             });
         });
     });
-
+    // TODO: Add to sync info - delete size, delete amount
 }
 
 async function getSyncInfo() {
@@ -309,21 +336,12 @@ async function getSyncInfo() {
 }
 
 async function startDownload(syncInfo, oldSyncInfo) {
-    // Get servers of online nodes
-    await getServers(syncInfo);
-
-    // Get backups for all servers
-
-    await iterateBackups(syncInfo);
-
-    // console.log(util.inspect(syncInfo, true, null, true));
-    // console.log(util.inspect(oldSyncInfo, true, null, true));
-
     // Download everything
     await downloadNewBackups(syncInfo, oldSyncInfo);
     
     let data = JSON.stringify(syncInfo);
     fs.writeFileSync('syncs/logs/syncinfo-' + formatDate(new Date()) + '.json', data);
+    console.log("Download done.");
 }
 
 function formatDate(date) {
@@ -341,12 +359,57 @@ async function done() {
     await fetch(process.env.DONE_GET_URL);
 }
 
+const readline = require('readline').createInterface({
+    input: process.stdin,
+    output: process.stdout
+});  
+
+async function findStrayBackupsOnNode(syncInfo, nodeid) {
+    readline.question('Please paste a space seperated list of backup filenames for node ' + nodeid + ' (e.g. aa-bb-cc-dd-ee.tar.gz ff-gg-hh-ii-jj.tar.gz):', backupNames => {
+        readline.close();
+        var backups = backupNames.split(" ").map(filename => filename.replace(".tar.gz", ""));
+        console.log("Sync");
+        console.log(util.inspect(syncInfo, true, null, true));
+        console.log("Input");
+        console.log(backups);
+
+        const node = syncInfo.nodes[nodeid.toString()];
+
+        const flatBackupUuidArray = Object.values(node.servers)
+            .flatMap(server => server.backups || [])
+        console.log("Backups");
+        console.log(flatBackupUuidArray);
+
+        const notFoundIds = [];
+
+        backups.forEach(backupuuid => {
+            console.log("Checking " + backupuuid)
+            if(!isBackupInBackupList(backupuuid, flatBackupUuidArray)) {
+                console.log(backupuuid + " was not found");
+                notFoundIds.push(backupuuid);
+            }
+        });
+
+        console.log("Found " + notFoundIds.length + " stray backup files in " + backups.length + " files.");
+        console.log(notFoundIds);
+    });
+}
+
 async function init() {
     const { syncInfo, oldSyncInfo } = await getSyncInfo();
+
+    // Get servers of online nodes
+    await getServers(syncInfo);
+    // Get backups for all servers
+    await iterateBackups(syncInfo);
+
+    //Sync backups
     await startDownload(syncInfo, oldSyncInfo);
-    console.log("Download done.");
     await deleteOldBackups(syncInfo);
     await done();
+    
+    // Find stray backups from list -> Needs user interaction
+    // await findStrayBackupsOnNode(syncInfo, 10);
 }
 
 init();
