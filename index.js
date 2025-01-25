@@ -43,16 +43,16 @@ async function checkIfNodeIsUp(nodeid) {
     const json = await resp.json();
 
     const url = json.attributes.scheme + "://" + json.attributes.fqdn + ":" + json.attributes.daemon_listen;
-    console.log("Check if Node " + nodeid + " (" + url + ") is online.");
-    const status = await fetchWithTimeout(url, {
+    console.log("Checking status of Node " + nodeid + " (" + url + ")");
+    const isonline = await fetchWithTimeout(url, {
         timeout: 3000
-    }).then(resp => true).catch(err => false);
-    if(status)
-        console.log("Node " + nodeid + " is up");
+    }).then(resp => resp.status == 401).catch(err => false);
+    if(isonline)
+        console.log("Online: " + nodeid);
     else
-        console.log("Node " + nodeid + " is down");
+        console.log("Offline: " + nodeid);
 
-    return status;
+    return isonline;
 }
 
 async function getServers(syncInfo) {
