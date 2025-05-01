@@ -5,9 +5,7 @@
   "main": "index.js",
   "scripts": {
     "run": "node index.js",
-    "docker-build": "docker build -f ./dockerfile . -t pterodactyl_backups",
-    "docker-build-arm": "docker build -f ./dockerfile . --platform linux/arm/v7 -t pterodactyl_backups",
-    "docker-save": "docker save pterodactyl_backups > pterodactyl_backups.tar"
+    "make": "make"
   },
   "author": "",
   "license": "ISC",

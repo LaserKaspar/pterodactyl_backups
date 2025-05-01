@@ -1,5 +1,5 @@
 /node_modules
 /syncs
 .env
-/settings
-pterodactyl_backups.tar
+*.tar
+*.tar.gz

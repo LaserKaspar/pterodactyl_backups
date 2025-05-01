@@ -1,19 +1,13 @@
-# FROM arm32v7/node:16-alpine3.16
-FROM node:16-alpine
+# build container
+FROM node:22-alpine AS build-env
+# copy only necessary files (.dockerignore)
+COPY . /app
+WORKDIR /app
 
-# Create app directory
-WORKDIR /usr/src/app
+RUN npm ci --omit=dev
 
-# Install app dependencies
-# A wildcard is used to ensure both package.json AND package-lock.json are copied
-# where available (npm@5+)
-COPY package*.json ./
-
-# RUN npm install
-# If you are building your code for production
-RUN npm ci --only=production --no-optional
-
-# Bundle app source
-COPY . .
-
+# runtime container
+FROM gcr.io/distroless/nodejs22-debian12
+COPY --from=build-env /app /app
+WORKDIR /app
 CMD [ "node", "index.js" ]
