@@ -153,14 +153,19 @@ async function downloadBackup(nodeid, serverid, backup) {
     
             // after download completed close filestream
             file.on("finish", () => {
-                file.close();
-                console.log("Download Completed");
-                fs.renameSync(filePath + ".download", filePath);
-                resolve();
+                file.close(() => {
+                    console.log("Download Completed");
+                    fs.renameSync(filePath + ".download", filePath);
+                    resolve();
+                });
             });
         }).on('error', function(err) { // Handle errors
-            fs.unlink(filePath); // Delete the file async. (But we don't check the result)
-            reject(err);
+            fs.unlink(filePath, (deletionError) => {
+                if(deletionError) {
+                    reject({error: err, couldNotDelet: deletionError});
+                }
+                reject(err);
+            });
         });;
     });
 }

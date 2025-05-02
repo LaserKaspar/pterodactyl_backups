@@ -1,18 +1,18 @@
-# Set variables
 IMAGE_NAME = pterodactyl-backups
 TAG = latest
-TAR_NAME = $(IMAGE_NAME)-$(TAG).tar.gz
 
-all: build export
+all: amd64 arm64
 
-build:
-	docker build -t $(IMAGE_NAME):$(TAG) .
+amd64:
+	docker buildx build --platform linux/amd64 --output type=docker -t $(IMAGE_NAME):$(TAG)-amd64 .
+	docker save $(IMAGE_NAME):$(TAG)-amd64 | gzip > $(IMAGE_NAME)-$(TAG)-amd64.tar.gz
 
-export: build
-	docker save $(IMAGE_NAME):$(TAG) | gzip > $(TAR_NAME)
-	echo "Image saved as $(TAR_NAME)"
+arm64:
+	docker buildx build --platform linux/arm64 --output type=docker -t $(IMAGE_NAME):$(TAG)-arm64 .
+	docker save $(IMAGE_NAME):$(TAG)-arm64 | gzip > $(IMAGE_NAME)-$(TAG)-arm64.tar.gz
 
 clean:
-	docker rmi $(IMAGE_NAME):$(TAG)
+	docker rmi $(IMAGE_NAME):$(TAG)-amd64 || true
+	docker rmi $(IMAGE_NAME):$(TAG)-arm64 || true
 
-.PHONY: all build export clean
+.PHONY: all amd64 arm64 clean
