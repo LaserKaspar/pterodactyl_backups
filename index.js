@@ -56,18 +56,43 @@ async function checkIfNodeIsUp(nodeid) {
 }
 
 async function getServers(syncInfo) {
-    const resp = await fetch(process.env.PTERO_BASE_URL + '/api/application/servers', {
-        headers: {"Authorization": 'Bearer ' + process.env.APPLICATION_API_KEY}
-    });
-    const json = await resp.json(); // TODO: Check if API key was denied
+    let page = 1;
+    let hasNextPage = true;
 
-    for(const server of json.data) {
-        const attributes = server.attributes;
-        const nodeid = attributes.node;
+    while (hasNextPage) {
+        const resp = await fetch(`${process.env.PTERO_BASE_URL}/api/application/servers?page=${page}`, {
+            headers: {
+                "Authorization": `Bearer ${process.env.APPLICATION_API_KEY}`
+            }
+        });
 
-        if(syncInfo.nodes[nodeid].online) {
-            syncInfo.nodes[nodeid].servers[attributes.identifier] = {name: attributes.name, identifier: attributes.identifier, backupLimit: attributes.feature_limits.backups, suspended: attributes.suspended};
+        if (!resp.ok) {
+            console.error(`Failed to fetch servers: ${resp.status} ${resp.statusText}`);
+            return;
         }
+
+        const json = await resp.json();
+
+        for (const server of json.data) {
+            const attributes = server.attributes;
+            const nodeid = attributes.node;
+
+            if (syncInfo.nodes[nodeid]?.online) {
+                console.log(`(${nodeid}) ${attributes.name}`);
+                syncInfo.nodes[nodeid].servers[attributes.identifier] = {
+                    name: attributes.name,
+                    identifier: attributes.identifier,
+                    backupLimit: attributes.feature_limits.backups,
+                    suspended: attributes.suspended
+                };
+            } else {
+                console.log(`Skipping node (${nodeid}) with server: ${attributes.name}`);
+            }
+        }
+
+        const pagination = json.meta?.pagination;
+        hasNextPage = pagination?.links?.next != null;
+        page++;
     }
 }
 
@@ -76,7 +101,7 @@ async function iterateBackups(syncInfo) {
         if(!syncInfo.nodes[node].online) continue;
 
         for(const server in syncInfo.nodes[node].servers) {
-            const backups =  await getBackupForServer(syncInfo.nodes[node].servers[server]);
+            const backups =  await getBackupForServer(node, syncInfo.nodes[node].servers[server]);
             syncInfo.nodes[node].servers[server].backups = backups;
             if(backups)
                 syncInfo.nodes[node].servers[server].backupcount = backups.length;
@@ -84,21 +109,21 @@ async function iterateBackups(syncInfo) {
     }
 }
 
-async function getBackupForServer(server) {
+async function getBackupForServer(node, server) {
     if(server.suspended) {
-        console.log("Server suspended: " + server.name);
+        console.log("(" + node + ") Server suspended: " + server.name);
         return;
     }
 
     if(server.backupLimit == 0) {
-        console.log("No backups: " + server.name);
+        console.log("(" + node + ") No backups: " + server.name);
         return;
     }
 
     const resp = await fetch(process.env.PTERO_BASE_URL + '/api/client/servers/' + server.identifier + '/backups', {
         headers: {"Authorization": 'Bearer ' + process.env.ADMINUSER_API_KEY}
     });
-    console.log("Get backups for: " + server.name);
+    console.log("(" + node + ") Get backups for: " + server.name);
     const backups = (await resp.json()).data;
 
     return backups.map(backup => {
@@ -195,7 +220,7 @@ async function downloadNewBackups(syncInfo, oldSyncInfo) {
                         console.log("Last sync detected.");
                         // Node was present in last sync
                         if(oldSyncInfo.nodes && oldSyncInfo.nodes[nodeid] && oldSyncInfo.nodes[nodeid].online) {
-                            console.log("Node with this backup was present & online in last sync.");
+                            console.log(`Node with this backup (${serverid}/${backup.uuid}) was present & online in last sync.`);
                             // Last sync was after backup creation
                             if(new Date(oldSyncInfo.lastSync) > new Date(backup.date)) {
                                 console.log("Backup should already be synced.");
@@ -361,6 +386,7 @@ function formatDate(date) {
 }
 
 async function done() {
+    console.log("Done. Announcing status to: " + process.env.DONE_GET_URL);
     await fetch(process.env.DONE_GET_URL);
 }
 
